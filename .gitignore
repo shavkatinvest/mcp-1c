@@ -32,3 +32,9 @@ mcp-1c-community-garble-test-*
 extension/*.cfe
 cmd/mcp-1c/extension/
 
+# External dev tools (downloaded, not vendored — see scripts/lint-bsl.ps1)
+/tools-external/
+
+# 1c-skills project config (contains 1C credentials) — see .v8-project.example.json
+.v8-project.json
+
