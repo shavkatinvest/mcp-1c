@@ -338,6 +338,23 @@ func (idx *Index) GetContent(id string) (string, bool) {
 	return content, true
 }
 
+// GetPath returns the absolute on-disk path of the given module ID (the same
+// ID format returned by search_code and consumed by GetContent), so callers
+// that need to reference or rewrite the underlying .bsl file — e.g.
+// propose_module_change — do not have to re-derive it from the ID's naming
+// convention. Returns empty string and false if the module is not found or
+// the index is not ready.
+func (idx *Index) GetPath(id string) (string, bool) {
+	if !idx.ready.Load() {
+		return "", false
+	}
+	id = NFC(id)
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	path, ok := idx.pathByName[id]
+	return path, ok
+}
+
 // loadedModule holds the result of reading a single .bsl file.
 type loadedModule struct {
 	name    string

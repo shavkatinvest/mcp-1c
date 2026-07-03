@@ -33,6 +33,8 @@ func New(version string, onecClient *onec.Client, dumpIndex *dump.Index, writeCl
 	s.AddTool(tools.QueryTool(), tools.NewQueryHandler(onecClient))
 	if dumpIndex != nil {
 		s.AddTool(tools.SearchCodeTool(), tools.NewSearchCodeHandler(dumpIndex))
+		s.AddTool(tools.ProposeModuleChangeTool(), tools.NewProposeModuleChangeHandler(dumpIndex))
+		s.AddTool(tools.ListProposedChangesTool(), tools.NewListProposedChangesHandler(dumpIndex))
 	}
 
 	// Pass dump directory to form handler so it can enrich the HTTP response

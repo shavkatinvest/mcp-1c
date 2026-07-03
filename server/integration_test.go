@@ -371,7 +371,7 @@ func TestIntegration_ListTools(t *testing.T) {
 		"get_metadata_tree", "get_object_structure", "execute_query",
 		"search_code", "get_form_structure", "validate_query",
 		"get_event_log", "get_configuration_info", "bsl_syntax_help",
-		"get_document",
+		"get_document", "propose_module_change", "list_proposed_changes",
 	}
 	for _, want := range expected {
 		if !toolNames[want] {
@@ -723,6 +723,63 @@ func TestIntegration_SearchCode(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("expected %q in response, got:\n%s", want, text)
 		}
+	}
+}
+
+func TestIntegration_ProposeModuleChange(t *testing.T) {
+	session, cleanup := setupIntegration(t, false)
+	defer cleanup()
+	ctx := context.Background()
+
+	const moduleID = "Документ.РеализацияТоваровУслуг.МодульОбъекта"
+	const newContent = "Процедура ОбработкаПроведения(Отказ, РежимПроведения)\n\t// Новый код проведения\nКонецПроцедуры\n"
+
+	proposeRes, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "propose_module_change",
+		Arguments: map[string]any{
+			"module_id":   moduleID,
+			"new_content": newContent,
+			"rationale":   "test proposal - must not be applied automatically",
+		},
+	})
+	if err != nil {
+		t.Fatalf("propose_module_change error: %v", err)
+	}
+	if proposeRes.IsError {
+		t.Fatalf("propose_module_change returned tool error: %v", proposeRes.Content)
+	}
+	text := proposeRes.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "НЕ применено") {
+		t.Errorf("expected response to state the change was not applied, got:\n%s", text)
+	}
+	if !strings.Contains(text, "Новый код проведения") {
+		t.Errorf("expected diff to show the new content, got:\n%s", text)
+	}
+
+	// The underlying dump file must be untouched by propose_module_change:
+	// searching for the original fixture text should still find it.
+	searchRes, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "search_code",
+		Arguments: map[string]any{"query": "Код проведения"},
+	})
+	if err != nil {
+		t.Fatalf("search_code (post-propose) error: %v", err)
+	}
+	searchText := searchRes.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(searchText, "Документ.РеализацияТоваровУслуг.МодульОбъекта") {
+		t.Errorf("expected original module content to be unchanged on disk, got search result:\n%s", searchText)
+	}
+
+	listRes, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "list_proposed_changes",
+		Arguments: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("list_proposed_changes error: %v", err)
+	}
+	listText := listRes.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(listText, moduleID) {
+		t.Errorf("expected proposed change to be listed, got:\n%s", listText)
 	}
 }
 
