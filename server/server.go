@@ -10,7 +10,17 @@ import (
 
 // New creates an MCP server with basic configuration and registers tools.
 // If dumpIndex is provided, the search_code tool will be registered.
-func New(version string, onecClient *onec.Client, dumpIndex *dump.Index) *mcp.Server {
+//
+// writeClient controls the accounting write tools (create_document,
+// post_document, unpost_document): nil disables them entirely — an LLM
+// connected to a server started with writeClient=nil never sees these tools
+// in tools/list and therefore cannot call them, which is the primary safety
+// boundary for write access (see docs/WRITE-TOOLS.md). When non-nil,
+// writeClient is used only for the three write tools; it is expected to be
+// authenticated as a separate, minimally-privileged 1C user (e.g. mcp_writer)
+// distinct from onecClient's read-only credentials, so a misconfigured
+// onecClient can never accidentally gain write access.
+func New(version string, onecClient *onec.Client, dumpIndex *dump.Index, writeClient *onec.Client) *mcp.Server {
 	s := mcp.NewServer(
 		&mcp.Implementation{
 			Name:    "mcp-1c",
@@ -37,6 +47,19 @@ func New(version string, onecClient *onec.Client, dumpIndex *dump.Index) *mcp.Se
 	s.AddTool(tools.EventLogTool(), tools.NewEventLogHandler(onecClient))
 	s.AddTool(tools.ConfigurationInfoTool(), tools.NewConfigurationInfoHandler(onecClient))
 	tools.RegisterBSLHelp(s)
+
+	// get_document is read-only (no state change), so it is available
+	// regardless of writeClient — useful to inspect any document's state.
+	// It uses onecClient: MCP_ОсновнаяРоль grants the ДокументПоСсылке URL
+	// template too, so plain read-only credentials are enough.
+	s.AddTool(tools.GetDocumentTool(), tools.NewGetDocumentHandler(onecClient))
+
+	if writeClient != nil {
+		s.AddTool(tools.CreateDocumentTool(), tools.NewCreateDocumentHandler(writeClient))
+		s.AddTool(tools.PostDocumentTool(), tools.NewPostDocumentHandler(writeClient))
+		s.AddTool(tools.UnpostDocumentTool(), tools.NewUnpostDocumentHandler(writeClient))
+	}
+
 	prompts.RegisterAll(s)
 	return s
 }

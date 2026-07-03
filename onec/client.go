@@ -129,7 +129,7 @@ func (c *Client) do(req *http.Request, result any) error {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("1C returned status %d: %s", resp.StatusCode, string(body))
+		return &StatusError{StatusCode: resp.StatusCode, Body: body}
 	}
 
 	// Лимит размера ответа защищает от OOM на неожиданно больших ответах.
@@ -166,6 +166,36 @@ func (c *Client) errResponseTooLarge() error {
 			"или переменной окружения MCP_1C_MAX_RESPONSE_SIZE",
 		limitMiB,
 	)
+}
+
+// StatusError is returned by Client.do when 1C responds with a non-200 status.
+// It preserves the raw response body so callers that need structured error
+// details (write endpoints return {"error": code, "message": text, "field": ...})
+// can parse APIError out of Body, while Error() keeps the same plain-text shape
+// ("1C returned status %d: %s") that plain read-tool callers already rely on.
+type StatusError struct {
+	StatusCode int
+	Body       []byte
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("1C returned status %d: %s", e.StatusCode, string(e.Body))
+}
+
+// APIError attempts to parse the response body as the structured {"error",
+// "message", "field"} shape used by write endpoints. Returns false if the body
+// is not valid JSON or does not contain a non-empty "error" code (read endpoint
+// error bodies are {"error": "<human text>"} and typically fail this check
+// because "message" is absent — safe to fall back to Error() in that case).
+func (e *StatusError) APIError() (APIError, bool) {
+	var apiErr APIError
+	if err := json.Unmarshal(e.Body, &apiErr); err != nil {
+		return APIError{}, false
+	}
+	if apiErr.Code == "" || apiErr.Message == "" {
+		return APIError{}, false
+	}
+	return apiErr, true
 }
 
 // countingReader wraps a reader and counts the total number of bytes read.

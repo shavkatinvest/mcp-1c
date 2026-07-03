@@ -20,6 +20,19 @@ type Config struct {
 	// RequestTimeout — таймаут HTTP-запроса к 1С. Запас нужен для передачи
 	// крупных ответов /extensions (сотни мегабайт).
 	RequestTimeout time.Duration
+
+	// EnableWrites включает write-инструменты (create_document, post_document,
+	// unpost_document). По умолчанию выключено — сервер работает в безопасном
+	// read-only режиме, даже если случайно заданы WriteUser/WritePassword.
+	EnableWrites bool
+
+	// WriteUser/WritePassword — ОТДЕЛЬНЫЕ от User/Password учётные данные для
+	// write-инструментов (см. docs/WRITE-TOOLS.md). Разделение намеренное:
+	// даже если основной read-only пользователь случайно получит лишние права,
+	// write-инструменты всё равно используют только явно заданного
+	// write-пользователя (обычно mcp_writer с ролью MCP_РольЗаписи).
+	WriteUser     string
+	WritePassword string
 }
 
 // DefaultMaxResponseSizeMiB — лимит размера ответа 1С по умолчанию (MiB).
@@ -60,6 +73,17 @@ func Load() *Config {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			cfg.RequestTimeout = time.Duration(n) * time.Second
 		}
+	}
+	if v := os.Getenv("MCP_1C_ENABLE_WRITES"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.EnableWrites = b
+		}
+	}
+	if v := os.Getenv("MCP_1C_WRITE_USER"); v != "" {
+		cfg.WriteUser = v
+	}
+	if v := os.Getenv("MCP_1C_WRITE_PASSWORD"); v != "" {
+		cfg.WritePassword = v
 	}
 
 	return cfg

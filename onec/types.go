@@ -128,3 +128,43 @@ type EventLogEntry struct {
 	Comment     string `json:"comment,omitempty"`
 	Transaction string `json:"transaction,omitempty"`
 }
+
+// CreateDocumentRequest is the request body for the document creation endpoint (POST /document).
+type CreateDocumentRequest struct {
+	Type            string                   `json:"type"`
+	Attributes      map[string]any           `json:"attributes,omitempty"`
+	TabularSections map[string][]map[string]any `json:"tabular_sections,omitempty"`
+}
+
+// DocumentWriteResult is the response from the document creation and post/unpost endpoints.
+type DocumentWriteResult struct {
+	Ref    string `json:"ref"`
+	Number string `json:"number,omitempty"`
+	Date   string `json:"date"`
+	Posted bool   `json:"posted"`
+}
+
+// DocumentPostRequest is the request body for POST /document/post and POST /document/unpost.
+type DocumentPostRequest struct {
+	Type string `json:"type"`
+	Ref  string `json:"ref"`
+}
+
+// DocumentGetResult is the response from GET /document/{type}/{ref}.
+type DocumentGetResult struct {
+	Ref        string         `json:"ref"`
+	Type       string         `json:"type"`
+	Number     string         `json:"number"`
+	Date       string         `json:"date"`
+	Posted     bool           `json:"posted"`
+	Attributes map[string]any `json:"attributes"`
+}
+
+// APIError is the structured error body returned by 1C write endpoints:
+// {"error": code, "message": text, "field": optional}. Distinct from the plain
+// {"error": text} shape used by read endpoints (see onec.Client error handling).
+type APIError struct {
+	Code    string `json:"error"`
+	Message string `json:"message"`
+	Field   string `json:"field,omitempty"`
+}

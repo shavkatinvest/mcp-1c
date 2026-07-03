@@ -48,6 +48,9 @@ func main() {
 	platformVersion := flag.String("platform-version", "", "1C platform version override (e.g. 8.3.13), auto-detected from path if omitted")
 	dbUser := flag.String("db-user", "", "1C database user for DESIGNER (install mode)")
 	dbPassword := flag.String("db-password", "", "1C database password for DESIGNER (install mode)")
+	enableWrites := flag.Bool("enable-writes", false, "Enable accounting write tools (create_document, post_document, unpost_document). Requires --write-user/--write-password. Off by default — read-only is the safe out-of-box behaviour.")
+	writeUser := flag.String("write-user", "", "1C user for write tools, separate from --user (required when --enable-writes is set)")
+	writePassword := flag.String("write-password", "", "1C password for write tools, separate from --password (required when --enable-writes is set)")
 	quiet := flag.Bool("quiet", false, "Suppress all stderr output even when running in a terminal. Takes precedence over --verbose. Also activated by env MCP_1C_NO_TTY=1.")
 	verbose := flag.Bool("verbose", false, "Force verbose stderr output even when stdin is a pipe (useful for MCP client debugging). Overrides auto-detect and is itself overridden by --quiet.")
 	// Sentinel 0 => "flag not passed", so the MCP_1C_MAX_RESPONSE_SIZE env var
@@ -188,6 +191,15 @@ func main() {
 	if *requestTimeout > 0 {
 		cfg.RequestTimeout = time.Duration(*requestTimeout) * time.Second
 	}
+	if *enableWrites {
+		cfg.EnableWrites = true
+	}
+	if *writeUser != "" {
+		cfg.WriteUser = *writeUser
+	}
+	if *writePassword != "" {
+		cfg.WritePassword = *writePassword
+	}
 
 	client := onec.NewClient(cfg.BaseURL, cfg.User, cfg.Password,
 		onec.WithMaxResponseSize(cfg.MaxResponseSizeMiB),
@@ -195,6 +207,23 @@ func main() {
 	)
 
 	go checkExtensionVersion(client)
+
+	// Write tools use a SEPARATE client authenticated with write-only
+	// credentials (see internal/config.Config.WriteUser doc comment). Fail
+	// fast rather than silently falling back to the read-only client, which
+	// would either error at call time with confusing 1C rights errors, or —
+	// worse — silently succeed if the read user ever ends up over-permissioned.
+	var writeClient *onec.Client
+	if cfg.EnableWrites {
+		if cfg.WriteUser == "" || cfg.WritePassword == "" {
+			fmt.Fprintln(os.Stderr, "--enable-writes requires --write-user and --write-password (or MCP_1C_WRITE_USER/MCP_1C_WRITE_PASSWORD)")
+			os.Exit(2)
+		}
+		writeClient = onec.NewClient(cfg.BaseURL, cfg.WriteUser, cfg.WritePassword,
+			onec.WithMaxResponseSize(cfg.MaxResponseSizeMiB),
+			onec.WithRequestTimeout(cfg.RequestTimeout),
+		)
+	}
 
 	var dumpIndex *dump.Index
 	if *dumpDir != "" {
@@ -208,7 +237,7 @@ func main() {
 		// Index builds in background. ModuleCount is available after Ready().
 	}
 
-	s := server.New(version, client, dumpIndex)
+	s := server.New(version, client, dumpIndex, writeClient)
 
 	if err := s.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		fmt.Fprintf(os.Stderr, "mcp-1c error: %v\n", err)

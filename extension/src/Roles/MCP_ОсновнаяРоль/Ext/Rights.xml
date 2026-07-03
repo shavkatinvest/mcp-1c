@@ -133,4 +133,18 @@
 			<value>true</value>
 		</right>
 	</object>
+	<object>
+		<name>HTTPService.MCPService.URLTemplate.ДокументПоСсылке</name>
+		<right>
+			<name>Use</name>
+			<value>true</value>
+		</right>
+	</object>
+	<object>
+		<name>HTTPService.MCPService.URLTemplate.ДокументПоСсылке.Method.GET</name>
+		<right>
+			<name>Use</name>
+			<value>true</value>
+		</right>
+	</object>
 </Rights>

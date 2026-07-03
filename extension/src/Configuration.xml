@@ -65,6 +65,7 @@
 		<ChildObjects>
 			<Language>Русский</Language>
 			<Role>MCP_ОсновнаяРоль</Role>
+			<Role>MCP_РольЗаписи</Role>
 			<HTTPService>MCPService</HTTPService>
 		</ChildObjects>
 	</Configuration>

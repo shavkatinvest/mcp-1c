@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -158,6 +159,111 @@ func mock1CHandler() http.Handler {
 		})
 	})
 
+	// In-memory document store for the write-tool integration tests
+	// (create_document / post_document / unpost_document / get_document).
+	// A magic Организация value ("FORCE_ERROR") makes /document/post return a
+	// structured posting_failed error, so tests can exercise that path without
+	// a real 1C posting-rule violation.
+	type mockDoc struct {
+		typ        string
+		number     string
+		date       string
+		posted     bool
+		attributes map[string]any
+	}
+	docs := map[string]*mockDoc{}
+	docSeq := 0
+
+	mux.HandleFunc("/document/post", func(w http.ResponseWriter, r *http.Request) {
+		writeJSONErr := func(status int, code, msg string) {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(status)
+			json.NewEncoder(w).Encode(map[string]any{"error": code, "message": msg})
+		}
+		var req struct {
+			Type string `json:"type"`
+			Ref  string `json:"ref"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		doc, ok := docs[req.Ref]
+		if !ok {
+			writeJSONErr(http.StatusNotFound, "not_found", "Документ не найден: "+req.Ref)
+			return
+		}
+		if org, _ := doc.attributes["Организация"].(string); org == "FORCE_ERROR" {
+			writeJSONErr(http.StatusBadRequest, "posting_failed", "Недостаточно остатков на складе")
+			return
+		}
+		doc.posted = true
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		json.NewEncoder(w).Encode(map[string]any{"ref": req.Ref, "posted": true, "date": doc.date})
+	})
+
+	mux.HandleFunc("/document/unpost", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Type string `json:"type"`
+			Ref  string `json:"ref"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		doc, ok := docs[req.Ref]
+		if !ok {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]any{"error": "not_found", "message": "Документ не найден: " + req.Ref})
+			return
+		}
+		doc.posted = false
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		json.NewEncoder(w).Encode(map[string]any{"ref": req.Ref, "posted": false, "date": doc.date})
+	})
+
+	mux.HandleFunc("/document/", func(w http.ResponseWriter, r *http.Request) {
+		// GET /document/{type}/{ref}
+		path := strings.TrimPrefix(r.URL.Path, "/document/")
+		parts := strings.SplitN(path, "/", 2)
+		if len(parts) != 2 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		ref := parts[1]
+		doc, ok := docs[ref]
+		if !ok {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]any{"error": "not_found", "message": "Документ не найден: " + ref})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		json.NewEncoder(w).Encode(map[string]any{
+			"ref": ref, "type": doc.typ, "number": doc.number, "date": doc.date,
+			"posted": doc.posted, "attributes": doc.attributes,
+		})
+	})
+
+	mux.HandleFunc("/document", func(w http.ResponseWriter, r *http.Request) {
+		// POST /document
+		var req struct {
+			Type       string         `json:"type"`
+			Attributes map[string]any `json:"attributes"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+
+		docSeq++
+		ref := fmt.Sprintf("00000000-0000-0000-0000-%012d", docSeq)
+		docs[ref] = &mockDoc{
+			typ:        req.Type,
+			number:     fmt.Sprintf("ЗН-%06d", docSeq),
+			date:       "2026-07-02T10:00:00",
+			posted:     false,
+			attributes: req.Attributes,
+		}
+
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		json.NewEncoder(w).Encode(map[string]any{
+			"ref": ref, "number": docs[ref].number, "date": docs[ref].date, "posted": false,
+		})
+	})
+
 	mux.HandleFunc("/validate-query", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -184,7 +290,9 @@ func mock1CHandler() http.Handler {
 }
 
 // setupIntegration creates a mock 1C server and connected MCP client session.
-func setupIntegration(t *testing.T) (*mcp.ClientSession, func()) {
+// enableWrites controls whether the accounting write tools (create_document,
+// post_document, unpost_document) are registered on the server.
+func setupIntegration(t *testing.T, enableWrites bool) (*mcp.ClientSession, func()) {
 	t.Helper()
 
 	mock := httptest.NewServer(mock1CHandler())
@@ -215,7 +323,11 @@ func setupIntegration(t *testing.T) (*mcp.ClientSession, func()) {
 		}
 	}
 
-	srv := New("test", client, dumpIndex)
+	var writeClient *onec.Client
+	if enableWrites {
+		writeClient = client
+	}
+	srv := New("test", client, dumpIndex, writeClient)
 
 	ctx := context.Background()
 	ct, st := mcp.NewInMemoryTransports()
@@ -242,7 +354,7 @@ func setupIntegration(t *testing.T) (*mcp.ClientSession, func()) {
 }
 
 func TestIntegration_ListTools(t *testing.T) {
-	session, cleanup := setupIntegration(t)
+	session, cleanup := setupIntegration(t, false)
 	defer cleanup()
 
 	result, err := session.ListTools(context.Background(), nil)
@@ -259,6 +371,7 @@ func TestIntegration_ListTools(t *testing.T) {
 		"get_metadata_tree", "get_object_structure", "execute_query",
 		"search_code", "get_form_structure", "validate_query",
 		"get_event_log", "get_configuration_info", "bsl_syntax_help",
+		"get_document",
 	}
 	for _, want := range expected {
 		if !toolNames[want] {
@@ -269,10 +382,154 @@ func TestIntegration_ListTools(t *testing.T) {
 	if len(result.Tools) != len(expected) {
 		t.Errorf("expected %d tools, got %d: %v", len(expected), len(result.Tools), toolNames)
 	}
+
+	for _, absent := range []string{"create_document", "post_document", "unpost_document"} {
+		if toolNames[absent] {
+			t.Errorf("write tool %q must NOT be listed when enableWrites=false", absent)
+		}
+	}
+}
+
+func TestIntegration_ListTools_WritesEnabled(t *testing.T) {
+	session, cleanup := setupIntegration(t, true)
+	defer cleanup()
+
+	result, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools error: %v", err)
+	}
+
+	toolNames := make(map[string]bool)
+	for _, tool := range result.Tools {
+		toolNames[tool.Name] = true
+	}
+
+	for _, want := range []string{"create_document", "post_document", "unpost_document", "get_document"} {
+		if !toolNames[want] {
+			t.Errorf("expected write tool %q in list when enableWrites=true, got: %v", want, toolNames)
+		}
+	}
+}
+
+// TestIntegration_DocumentWriteFlow exercises the full create -> get -> post ->
+// get cycle through the MCP protocol, mirroring exactly what an LLM client
+// would do: create a draft (never posted by create_document itself), verify
+// it is unposted, post it explicitly, then verify the posted state.
+func TestIntegration_DocumentWriteFlow(t *testing.T) {
+	session, cleanup := setupIntegration(t, true)
+	defer cleanup()
+	ctx := context.Background()
+
+	createResult, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "create_document",
+		Arguments: map[string]any{
+			"document_type": "РеализацияТоваровУслуг",
+			"attributes":    map[string]any{"Организация": "org-guid"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create_document error: %v", err)
+	}
+	if createResult.IsError {
+		t.Fatalf("create_document returned tool error: %v", createResult.Content)
+	}
+	createText := createResult.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(createText, "НЕ проведён") {
+		t.Errorf("expected draft creation text to state the document is not posted, got:\n%s", createText)
+	}
+
+	ref := extractRef(t, createText)
+
+	getResult, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "get_document",
+		Arguments: map[string]any{"document_type": "РеализацияТоваровУслуг", "ref": ref},
+	})
+	if err != nil {
+		t.Fatalf("get_document error: %v", err)
+	}
+	getText := getResult.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(getText, "Проведён: false") {
+		t.Errorf("expected draft to be unposted, got:\n%s", getText)
+	}
+
+	postResult, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "post_document",
+		Arguments: map[string]any{"document_type": "РеализацияТоваровУслуг", "ref": ref},
+	})
+	if err != nil {
+		t.Fatalf("post_document error: %v", err)
+	}
+	if postResult.IsError {
+		t.Fatalf("post_document returned tool error: %v", postResult.Content)
+	}
+
+	getResult2, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "get_document",
+		Arguments: map[string]any{"document_type": "РеализацияТоваровУслуг", "ref": ref},
+	})
+	if err != nil {
+		t.Fatalf("get_document (after post) error: %v", err)
+	}
+	getText2 := getResult2.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(getText2, "Проведён: true") {
+		t.Errorf("expected document to be posted after post_document, got:\n%s", getText2)
+	}
+}
+
+// TestIntegration_PostDocument_StructuredFailure verifies that a posting_failed
+// error from 1C surfaces as an MCP tool-level error (IsError=true) with the
+// exact 1C message, not a generic Go/protocol error — required so the LLM can
+// see the reason and explain it or self-correct.
+func TestIntegration_PostDocument_StructuredFailure(t *testing.T) {
+	session, cleanup := setupIntegration(t, true)
+	defer cleanup()
+	ctx := context.Background()
+
+	createResult, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "create_document",
+		Arguments: map[string]any{
+			"document_type": "РеализацияТоваровУслуг",
+			"attributes":    map[string]any{"Организация": "FORCE_ERROR"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create_document error: %v", err)
+	}
+	ref := extractRef(t, createResult.Content[0].(*mcp.TextContent).Text)
+
+	postResult, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "post_document",
+		Arguments: map[string]any{"document_type": "РеализацияТоваровУслуг", "ref": ref},
+	})
+	if err != nil {
+		t.Fatalf("post_document transport error: %v", err)
+	}
+	if !postResult.IsError {
+		t.Fatalf("expected IsError=true for posting_failed, got success: %v", postResult.Content)
+	}
+	text := postResult.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "posting_failed") || !strings.Contains(text, "Недостаточно остатков") {
+		t.Errorf("expected structured posting_failed message, got:\n%s", text)
+	}
+}
+
+// extractRef pulls the ref=<value> token out of create_document's response text.
+func extractRef(t *testing.T, text string) string {
+	t.Helper()
+	idx := strings.Index(text, "ref=")
+	if idx < 0 {
+		t.Fatalf("no ref= found in text:\n%s", text)
+	}
+	rest := text[idx+len("ref="):]
+	end := strings.IndexAny(rest, ",)\n")
+	if end < 0 {
+		end = len(rest)
+	}
+	return rest[:end]
 }
 
 func TestIntegration_MetadataTree(t *testing.T) {
-	session, cleanup := setupIntegration(t)
+	session, cleanup := setupIntegration(t, false)
 	defer cleanup()
 
 	// Without filter -- summary with category names and counts.
@@ -316,7 +573,7 @@ func TestIntegration_MetadataTree(t *testing.T) {
 }
 
 func TestIntegration_ObjectStructure(t *testing.T) {
-	session, cleanup := setupIntegration(t)
+	session, cleanup := setupIntegration(t, false)
 	defer cleanup()
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -342,7 +599,7 @@ func TestIntegration_ObjectStructure(t *testing.T) {
 }
 
 func TestIntegration_ObjectStructure_Register(t *testing.T) {
-	session, cleanup := setupIntegration(t)
+	session, cleanup := setupIntegration(t, false)
 	defer cleanup()
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -368,7 +625,7 @@ func TestIntegration_ObjectStructure_Register(t *testing.T) {
 }
 
 func TestIntegration_ObjectStructure_NotFound(t *testing.T) {
-	session, cleanup := setupIntegration(t)
+	session, cleanup := setupIntegration(t, false)
 	defer cleanup()
 
 	_, err := session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -387,7 +644,7 @@ func TestIntegration_ObjectStructure_NotFound(t *testing.T) {
 }
 
 func TestIntegration_FormStructure(t *testing.T) {
-	session, cleanup := setupIntegration(t)
+	session, cleanup := setupIntegration(t, false)
 	defer cleanup()
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -413,7 +670,7 @@ func TestIntegration_FormStructure(t *testing.T) {
 }
 
 func TestIntegration_ConfigInfo(t *testing.T) {
-	session, cleanup := setupIntegration(t)
+	session, cleanup := setupIntegration(t, false)
 	defer cleanup()
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -441,7 +698,7 @@ func TestIntegration_ConfigInfo(t *testing.T) {
 }
 
 func TestIntegration_SearchCode(t *testing.T) {
-	session, cleanup := setupIntegration(t)
+	session, cleanup := setupIntegration(t, false)
 	defer cleanup()
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -470,7 +727,7 @@ func TestIntegration_SearchCode(t *testing.T) {
 }
 
 func TestIntegration_BSLSyntaxHelp(t *testing.T) {
-	session, cleanup := setupIntegration(t)
+	session, cleanup := setupIntegration(t, false)
 	defer cleanup()
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -496,7 +753,7 @@ func TestIntegration_BSLSyntaxHelp(t *testing.T) {
 }
 
 func TestIntegration_ExecuteQuery(t *testing.T) {
-	session, cleanup := setupIntegration(t)
+	session, cleanup := setupIntegration(t, false)
 	defer cleanup()
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -521,7 +778,7 @@ func TestIntegration_ExecuteQuery(t *testing.T) {
 }
 
 func TestIntegration_ValidateQuery_Valid(t *testing.T) {
-	session, cleanup := setupIntegration(t)
+	session, cleanup := setupIntegration(t, false)
 	defer cleanup()
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -544,7 +801,7 @@ func TestIntegration_ValidateQuery_Valid(t *testing.T) {
 }
 
 func TestIntegration_ValidateQuery_Invalid(t *testing.T) {
-	session, cleanup := setupIntegration(t)
+	session, cleanup := setupIntegration(t, false)
 	defer cleanup()
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -567,7 +824,7 @@ func TestIntegration_ValidateQuery_Invalid(t *testing.T) {
 }
 
 func TestIntegration_EventLog(t *testing.T) {
-	session, cleanup := setupIntegration(t)
+	session, cleanup := setupIntegration(t, false)
 	defer cleanup()
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -600,7 +857,7 @@ func TestIntegration_EventLog(t *testing.T) {
 }
 
 func TestIntegration_ListPrompts(t *testing.T) {
-	session, cleanup := setupIntegration(t)
+	session, cleanup := setupIntegration(t, false)
 	defer cleanup()
 
 	result, err := session.ListPrompts(context.Background(), nil)
@@ -640,7 +897,7 @@ func TestIntegration_ListPrompts(t *testing.T) {
 }
 
 func TestIntegration_GetPrompt_ReviewModule(t *testing.T) {
-	session, cleanup := setupIntegration(t)
+	session, cleanup := setupIntegration(t, false)
 	defer cleanup()
 
 	result, err := session.GetPrompt(context.Background(), &mcp.GetPromptParams{

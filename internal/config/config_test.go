@@ -94,6 +94,45 @@ func TestLoadMaxResponseSize(t *testing.T) {
 	})
 }
 
+func TestLoadWriteConfig(t *testing.T) {
+	t.Run("defaults to disabled", func(t *testing.T) {
+		t.Setenv("MCP_1C_ENABLE_WRITES", "")
+		t.Setenv("MCP_1C_WRITE_USER", "")
+		t.Setenv("MCP_1C_WRITE_PASSWORD", "")
+		cfg := Load()
+		if cfg.EnableWrites {
+			t.Error("expected EnableWrites to default to false")
+		}
+		if cfg.WriteUser != "" || cfg.WritePassword != "" {
+			t.Errorf("expected empty write credentials by default, got user=%q password=%q", cfg.WriteUser, cfg.WritePassword)
+		}
+	})
+
+	t.Run("env override", func(t *testing.T) {
+		t.Setenv("MCP_1C_ENABLE_WRITES", "true")
+		t.Setenv("MCP_1C_WRITE_USER", "mcp_writer")
+		t.Setenv("MCP_1C_WRITE_PASSWORD", "secret")
+		cfg := Load()
+		if !cfg.EnableWrites {
+			t.Error("expected EnableWrites=true")
+		}
+		if cfg.WriteUser != "mcp_writer" {
+			t.Errorf("expected write user mcp_writer, got %s", cfg.WriteUser)
+		}
+		if cfg.WritePassword != "secret" {
+			t.Errorf("expected write password secret, got %s", cfg.WritePassword)
+		}
+	})
+
+	t.Run("invalid bool falls back to default", func(t *testing.T) {
+		t.Setenv("MCP_1C_ENABLE_WRITES", "not-a-bool")
+		cfg := Load()
+		if cfg.EnableWrites {
+			t.Error("expected EnableWrites to stay false on invalid value")
+		}
+	})
+}
+
 func TestLoadRequestTimeout(t *testing.T) {
 	t.Run("env override", func(t *testing.T) {
 		t.Setenv("MCP_1C_REQUEST_TIMEOUT", "600")

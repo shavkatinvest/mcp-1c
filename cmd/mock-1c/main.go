@@ -176,6 +176,153 @@ var (
 
 )
 
+// mockDocument is an in-memory document record used by the write endpoints
+// (/document, /document/post, /document/unpost, /document/{type}/{ref}).
+// It exists purely to let tools/create_document.go and friends be exercised
+// locally without a real 1C instance.
+type mockDocument struct {
+	Type       string
+	Number     string
+	Date       string
+	Posted     bool
+	Attributes map[string]any
+}
+
+var (
+	documents   = map[string]*mockDocument{}
+	documentSeq = 0
+)
+
+// forceErrorOrgValue is a magic Организация attribute value that makes
+// /document/post return a structured posting_failed error, so the error path
+// of post_document can be exercised without a real 1C posting-rule violation.
+const forceErrorOrgValue = "FORCE_ERROR"
+
+func newDocumentRef() string {
+	documentSeq++
+	return fmt.Sprintf("00000000-0000-0000-0000-%012d", documentSeq)
+}
+
+func handleDocumentCreate(w http.ResponseWriter, r *http.Request) {
+	log.Printf("%s %s", r.Method, r.URL.Path)
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		return
+	}
+
+	var req struct {
+		Type            string                      `json:"type"`
+		Attributes      map[string]any              `json:"attributes"`
+		TabularSections map[string][]map[string]any `json:"tabular_sections"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_json", "message": err.Error()})
+		return
+	}
+	if req.Type == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "validation_failed", "message": "type is required"})
+		return
+	}
+
+	ref := newDocumentRef()
+	doc := &mockDocument{
+		Type:       req.Type,
+		Number:     fmt.Sprintf("ЗН-%06d", documentSeq),
+		Date:       "2026-07-02T10:00:00",
+		Posted:     false,
+		Attributes: req.Attributes,
+	}
+	documents[ref] = doc
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ref": ref, "number": doc.Number, "date": doc.Date, "posted": false,
+	})
+}
+
+func handleDocumentGet(w http.ResponseWriter, r *http.Request) {
+	log.Printf("%s %s", r.Method, r.URL.Path)
+
+	path := strings.TrimPrefix(r.URL.Path, "/mcp/document/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "validation_failed", "message": "Invalid path. Expected /mcp/document/{type}/{ref}",
+		})
+		return
+	}
+	ref := parts[1]
+
+	doc, ok := documents[ref]
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found", "message": "Документ не найден: " + ref})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ref": ref, "type": doc.Type, "number": doc.Number, "date": doc.Date,
+		"posted": doc.Posted, "attributes": doc.Attributes,
+	})
+}
+
+func handleDocumentPost(w http.ResponseWriter, r *http.Request) {
+	log.Printf("%s %s", r.Method, r.URL.Path)
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		return
+	}
+
+	var req struct {
+		Type string `json:"type"`
+		Ref  string `json:"ref"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_json", "message": err.Error()})
+		return
+	}
+
+	doc, ok := documents[req.Ref]
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found", "message": "Документ не найден: " + req.Ref})
+		return
+	}
+
+	if org, _ := doc.Attributes["Организация"].(string); org == forceErrorOrgValue {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "posting_failed", "message": "Недостаточно остатков на складе",
+		})
+		return
+	}
+
+	doc.Posted = true
+	writeJSON(w, http.StatusOK, map[string]any{"ref": req.Ref, "posted": true, "date": doc.Date})
+}
+
+func handleDocumentUnpost(w http.ResponseWriter, r *http.Request) {
+	log.Printf("%s %s", r.Method, r.URL.Path)
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		return
+	}
+
+	var req struct {
+		Type string `json:"type"`
+		Ref  string `json:"ref"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_json", "message": err.Error()})
+		return
+	}
+
+	doc, ok := documents[req.Ref]
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found", "message": "Документ не найден: " + req.Ref})
+		return
+	}
+
+	doc.Posted = false
+	writeJSON(w, http.StatusOK, map[string]any{"ref": req.Ref, "posted": false, "date": doc.Date})
+}
+
 // isSelectQuery checks if a query starts with SELECT/ВЫБРАТЬ keyword.
 func isSelectQuery(query string) bool {
 	upper := strings.ToUpper(strings.TrimSpace(query))
@@ -399,6 +546,10 @@ func main() {
 	mux.HandleFunc("/mcp/eventlog", handleEventLog)
 	mux.HandleFunc("/mcp/configuration", handleConfiguration)
 	mux.HandleFunc("/mcp/version", handleVersion)
+	mux.HandleFunc("/mcp/document", handleDocumentCreate)
+	mux.HandleFunc("/mcp/document/post", handleDocumentPost)
+	mux.HandleFunc("/mcp/document/unpost", handleDocumentUnpost)
+	mux.HandleFunc("/mcp/document/", handleDocumentGet)
 
 	addr := fmt.Sprintf(":%d", *port)
 	logger.Printf("Mock 1C server listening on %s", addr)
