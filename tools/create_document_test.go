@@ -41,7 +41,7 @@ func TestCreateDocumentHandler(t *testing.T) {
 	defer mockServer.Close()
 
 	client := onec.NewClient(mockServer.URL, "", "")
-	handler := NewCreateDocumentHandler(client)
+	handler := NewCreateDocumentHandler(client, nil)
 
 	args, _ := json.Marshal(map[string]any{
 		"document_type": "РеализацияТоваровУслуг",
@@ -78,7 +78,7 @@ func TestCreateDocumentHandler_MissingType(t *testing.T) {
 	defer mockServer.Close()
 
 	client := onec.NewClient(mockServer.URL, "", "")
-	handler := NewCreateDocumentHandler(client)
+	handler := NewCreateDocumentHandler(client, nil)
 
 	args, _ := json.Marshal(map[string]any{})
 	req := &mcp.CallToolRequest{
@@ -103,7 +103,7 @@ func TestCreateDocumentHandler_StructuredError(t *testing.T) {
 	defer mockServer.Close()
 
 	client := onec.NewClient(mockServer.URL, "", "")
-	handler := NewCreateDocumentHandler(client)
+	handler := NewCreateDocumentHandler(client, nil)
 
 	args, _ := json.Marshal(map[string]any{"document_type": "Foo"})
 	req := &mcp.CallToolRequest{

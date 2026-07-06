@@ -1,8 +1,11 @@
 package config
 
 import (
+	"reflect"
 	"testing"
 	"time"
+
+	"github.com/feenlace/mcp-1c/tools"
 )
 
 func TestLoadDefaults(t *testing.T) {
@@ -131,6 +134,45 @@ func TestLoadWriteConfig(t *testing.T) {
 			t.Error("expected EnableWrites to stay false on invalid value")
 		}
 	})
+}
+
+func TestLoadWriteTypeBlacklist(t *testing.T) {
+	t.Run("defaults to dibank patterns", func(t *testing.T) {
+		t.Setenv("MCP_1C_WRITE_TYPE_BLACKLIST", "")
+		cfg := Load()
+		if !reflect.DeepEqual(cfg.WriteTypeBlacklist, tools.DefaultWriteTypeBlacklist) {
+			t.Errorf("expected default blacklist %v, got %v", tools.DefaultWriteTypeBlacklist, cfg.WriteTypeBlacklist)
+		}
+	})
+
+	t.Run("env override", func(t *testing.T) {
+		t.Setenv("MCP_1C_WRITE_TYPE_BLACKLIST", "foo_*, bar_*")
+		cfg := Load()
+		want := []string{"foo_*", "bar_*"}
+		if !reflect.DeepEqual(cfg.WriteTypeBlacklist, want) {
+			t.Errorf("expected %v, got %v", want, cfg.WriteTypeBlacklist)
+		}
+	})
+}
+
+func TestParseWriteTypeBlacklist(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want []string
+	}{
+		{"", nil},
+		{"  ", nil},
+		{"dibank_*", []string{"dibank_*"}},
+		{"dibank_*,дибанк_*", []string{"dibank_*", "дибанк_*"}},
+		{" dibank_* , дибанк_* ", []string{"dibank_*", "дибанк_*"}},
+		{"a,,b", []string{"a", "b"}},
+	}
+	for _, c := range cases {
+		got := ParseWriteTypeBlacklist(c.raw)
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("ParseWriteTypeBlacklist(%q) = %v, want %v", c.raw, got, c.want)
+		}
+	}
 }
 
 func TestLoadRequestTimeout(t *testing.T) {

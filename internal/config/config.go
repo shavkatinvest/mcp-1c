@@ -3,7 +3,10 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
+
+	"github.com/feenlace/mcp-1c/tools"
 )
 
 // Config holds the MCP server configuration.
@@ -33,6 +36,13 @@ type Config struct {
 	// write-пользователя (обычно mcp_writer с ролью MCP_РольЗаписи).
 	WriteUser     string
 	WritePassword string
+
+	// WriteTypeBlacklist — glob-паттерны имён видов документов/справочников
+	// (см. tools.IsWriteBlacklisted), которые write-инструменты отказываются
+	// трогать даже при полных правах WriteUser в 1С. По умолчанию —
+	// tools.DefaultWriteTypeBlacklist (платёжные документы dibank_*); пустой
+	// срез отключает проверку целиком.
+	WriteTypeBlacklist []string
 }
 
 // DefaultMaxResponseSizeMiB — лимит размера ответа 1С по умолчанию (MiB).
@@ -49,6 +59,7 @@ func Load() *Config {
 		BaseURL:            "http://localhost:8080/hs/mcp-1c",
 		MaxResponseSizeMiB: DefaultMaxResponseSizeMiB,
 		RequestTimeout:     DefaultRequestTimeout,
+		WriteTypeBlacklist: tools.DefaultWriteTypeBlacklist,
 	}
 
 	if v := os.Getenv("MCP_1C_BASE_URL"); v != "" {
@@ -85,6 +96,29 @@ func Load() *Config {
 	if v := os.Getenv("MCP_1C_WRITE_PASSWORD"); v != "" {
 		cfg.WritePassword = v
 	}
+	if v := os.Getenv("MCP_1C_WRITE_TYPE_BLACKLIST"); v != "" {
+		cfg.WriteTypeBlacklist = ParseWriteTypeBlacklist(v)
+	}
 
 	return cfg
+}
+
+// ParseWriteTypeBlacklist splits a comma-separated list of glob patterns
+// (as accepted by the --write-type-blacklist flag and MCP_1C_WRITE_TYPE_BLACKLIST
+// env var) into a slice, trimming whitespace and dropping empty entries. An
+// empty or whitespace-only input yields a nil slice, which disables the
+// blacklist check entirely.
+func ParseWriteTypeBlacklist(raw string) []string {
+	parts := strings.Split(raw, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }

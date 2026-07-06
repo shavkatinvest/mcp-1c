@@ -363,6 +363,122 @@
 					</Method>
 				</ChildObjects>
 			</URLTemplate>
+			<URLTemplate uuid="83d5deff-ee91-4d8c-9f0d-f12065f91022">
+				<Properties>
+					<Name>Справочник</Name>
+					<Synonym>
+						<v8:item>
+							<v8:lang>ru</v8:lang>
+							<v8:content>Справочник</v8:content>
+						</v8:item>
+					</Synonym>
+					<Comment/>
+					<Template>/catalog</Template>
+				</Properties>
+				<ChildObjects>
+					<Method uuid="d7517914-71f1-488c-bb02-74a5cbed38ad">
+						<Properties>
+							<Name>POST</Name>
+							<Synonym>
+								<v8:item>
+									<v8:lang>ru</v8:lang>
+									<v8:content>POST</v8:content>
+								</v8:item>
+							</Synonym>
+							<Comment/>
+							<HTTPMethod>POST</HTTPMethod>
+							<Handler>СправочникPOST</Handler>
+						</Properties>
+					</Method>
+				</ChildObjects>
+			</URLTemplate>
+			<URLTemplate uuid="3c81995d-64a4-421a-b749-d75f9ed935c6">
+				<Properties>
+					<Name>СправочникИзменить</Name>
+					<Synonym>
+						<v8:item>
+							<v8:lang>ru</v8:lang>
+							<v8:content>Изменить элемент справочника</v8:content>
+						</v8:item>
+					</Synonym>
+					<Comment/>
+					<Template>/catalog/update</Template>
+				</Properties>
+				<ChildObjects>
+					<Method uuid="7e89894b-4c39-45a5-b360-b2049d197222">
+						<Properties>
+							<Name>POST</Name>
+							<Synonym>
+								<v8:item>
+									<v8:lang>ru</v8:lang>
+									<v8:content>POST</v8:content>
+								</v8:item>
+							</Synonym>
+							<Comment/>
+							<HTTPMethod>POST</HTTPMethod>
+							<Handler>СправочникUPDATE</Handler>
+						</Properties>
+					</Method>
+				</ChildObjects>
+			</URLTemplate>
+			<URLTemplate uuid="f12ee14d-6bba-436c-ab23-8896cb33bae2">
+				<Properties>
+					<Name>СправочникПоСсылке</Name>
+					<Synonym>
+						<v8:item>
+							<v8:lang>ru</v8:lang>
+							<v8:content>Справочник по ссылке</v8:content>
+						</v8:item>
+					</Synonym>
+					<Comment/>
+					<Template>/catalog/{type}/{ref}</Template>
+				</Properties>
+				<ChildObjects>
+					<Method uuid="584e6607-5618-4420-b3c6-307c563c6bf4">
+						<Properties>
+							<Name>GET</Name>
+							<Synonym>
+								<v8:item>
+									<v8:lang>ru</v8:lang>
+									<v8:content>GET</v8:content>
+								</v8:item>
+							</Synonym>
+							<Comment/>
+							<HTTPMethod>GET</HTTPMethod>
+							<Handler>СправочникGET</Handler>
+						</Properties>
+					</Method>
+				</ChildObjects>
+			</URLTemplate>
+			<URLTemplate uuid="8e90402f-f0f2-4ca6-a504-85bc8566d821">
+				<Properties>
+					<Name>ДокументИзменить</Name>
+					<Synonym>
+						<v8:item>
+							<v8:lang>ru</v8:lang>
+							<v8:content>Изменить документ</v8:content>
+						</v8:item>
+					</Synonym>
+					<Comment/>
+					<Template>/document/update</Template>
+				</Properties>
+				<ChildObjects>
+					<Method uuid="87d9e7f2-593e-4a5e-8fbf-d962ec88c2f7">
+						<Properties>
+							<Name>POST</Name>
+							<Synonym>
+								<v8:item>
+									<v8:lang>ru</v8:lang>
+									<v8:content>POST</v8:content>
+								</v8:item>
+							</Synonym>
+							<Comment/>
+							<HTTPMethod>POST</HTTPMethod>
+							<Handler>ДокументUPDATE</Handler>
+						</Properties>
+					</Method>
+				</ChildObjects>
+			</URLTemplate>
 			<URLTemplate uuid="6b4b679c-6e8d-4b0b-8e22-3035b5f75994">
 				<Properties>
 					<Name>ДокументПоСсылке</Name>
@@ -388,6 +504,64 @@
 							<Comment/>
 							<HTTPMethod>GET</HTTPMethod>
 							<Handler>ДокументGET</Handler>
+						</Properties>
+					</Method>
+				</ChildObjects>
+			</URLTemplate>
+			<URLTemplate uuid="413d2e0d-496f-4711-ada2-2133aaa58da8">
+				<Properties>
+					<Name>ПометкаУдаления</Name>
+					<Synonym>
+						<v8:item>
+							<v8:lang>ru</v8:lang>
+							<v8:content>Пометка удаления</v8:content>
+						</v8:item>
+					</Synonym>
+					<Comment/>
+					<Template>/object/deletion-mark</Template>
+				</Properties>
+				<ChildObjects>
+					<Method uuid="b8dc324a-1863-44a3-8dcd-0234d0e687b2">
+						<Properties>
+							<Name>POST</Name>
+							<Synonym>
+								<v8:item>
+									<v8:lang>ru</v8:lang>
+									<v8:content>POST</v8:content>
+								</v8:item>
+							</Synonym>
+							<Comment/>
+							<HTTPMethod>POST</HTTPMethod>
+							<Handler>ПометкаУдаленияPOST</Handler>
+						</Properties>
+					</Method>
+				</ChildObjects>
+			</URLTemplate>
+			<URLTemplate uuid="429adb16-c772-4820-957a-481df63be70e">
+				<Properties>
+					<Name>ПоискСсылки</Name>
+					<Synonym>
+						<v8:item>
+							<v8:lang>ru</v8:lang>
+							<v8:content>Поиск ссылки</v8:content>
+						</v8:item>
+					</Synonym>
+					<Comment/>
+					<Template>/find</Template>
+				</Properties>
+				<ChildObjects>
+					<Method uuid="4539f468-44cc-4934-b2ed-d281f30698d1">
+						<Properties>
+							<Name>GET</Name>
+							<Synonym>
+								<v8:item>
+									<v8:lang>ru</v8:lang>
+									<v8:content>GET</v8:content>
+								</v8:item>
+							</Synonym>
+							<Comment/>
+							<HTTPMethod>GET</HTTPMethod>
+							<Handler>ПоискСсылкиGET</Handler>
 						</Properties>
 					</Method>
 				</ChildObjects>

@@ -24,7 +24,7 @@ func TestPostDocumentHandler(t *testing.T) {
 	defer mockServer.Close()
 
 	client := onec.NewClient(mockServer.URL, "", "")
-	handler := NewPostDocumentHandler(client)
+	handler := NewPostDocumentHandler(client, nil)
 
 	args, _ := json.Marshal(map[string]any{
 		"document_type": "РеализацияТоваровУслуг",
@@ -47,7 +47,7 @@ func TestPostDocumentHandler(t *testing.T) {
 
 func TestPostDocumentHandler_MissingRef(t *testing.T) {
 	client := onec.NewClient("http://unused.invalid", "", "")
-	handler := NewPostDocumentHandler(client)
+	handler := NewPostDocumentHandler(client, nil)
 
 	args, _ := json.Marshal(map[string]any{"document_type": "РеализацияТоваровУслуг"})
 	req := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Name: "post_document", Arguments: args}}
@@ -67,7 +67,7 @@ func TestPostDocumentHandler_StructuredFailure(t *testing.T) {
 	defer mockServer.Close()
 
 	client := onec.NewClient(mockServer.URL, "", "")
-	handler := NewPostDocumentHandler(client)
+	handler := NewPostDocumentHandler(client, nil)
 
 	args, _ := json.Marshal(map[string]any{
 		"document_type": "РеализацияТоваровУслуг",
@@ -100,7 +100,7 @@ func TestUnpostDocumentHandler(t *testing.T) {
 	defer mockServer.Close()
 
 	client := onec.NewClient(mockServer.URL, "", "")
-	handler := NewUnpostDocumentHandler(client)
+	handler := NewUnpostDocumentHandler(client, nil)
 
 	args, _ := json.Marshal(map[string]any{
 		"document_type": "РеализацияТоваровУслуг",

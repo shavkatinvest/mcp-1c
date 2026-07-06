@@ -44,8 +44,8 @@ func PostDocumentTool() *mcp.Tool {
 }
 
 // NewPostDocumentHandler returns a ToolHandler that posts (проводит) an existing document.
-func NewPostDocumentHandler(client *onec.Client) mcp.ToolHandler {
-	return newDocumentPostingHandler(client, "/document/post", "проведён")
+func NewPostDocumentHandler(client *onec.Client, writeBlacklist []string) mcp.ToolHandler {
+	return newDocumentPostingHandler(client, writeBlacklist, "/document/post", "проведён")
 }
 
 // UnpostDocumentTool returns the MCP tool definition for unpost_document.
@@ -75,14 +75,14 @@ func UnpostDocumentTool() *mcp.Tool {
 }
 
 // NewUnpostDocumentHandler returns a ToolHandler that unposts (распроводит) an existing document.
-func NewUnpostDocumentHandler(client *onec.Client) mcp.ToolHandler {
-	return newDocumentPostingHandler(client, "/document/unpost", "отменено проведение")
+func NewUnpostDocumentHandler(client *onec.Client, writeBlacklist []string) mcp.ToolHandler {
+	return newDocumentPostingHandler(client, writeBlacklist, "/document/unpost", "отменено проведение")
 }
 
 // newDocumentPostingHandler builds the shared post/unpost handler logic — both
 // tools send the same {type, ref} body and only differ in the target endpoint
 // and success wording.
-func newDocumentPostingHandler(client *onec.Client, endpoint, successVerb string) mcp.ToolHandler {
+func newDocumentPostingHandler(client *onec.Client, writeBlacklist []string, endpoint, successVerb string) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var input documentRefInput
 		if err := json.Unmarshal(req.Params.Arguments, &input); err != nil {
@@ -93,6 +93,9 @@ func newDocumentPostingHandler(client *onec.Client, endpoint, successVerb string
 		}
 		if input.Ref == "" {
 			return nil, fmt.Errorf("ref is required")
+		}
+		if IsWriteBlacklisted(input.DocumentType, writeBlacklist) {
+			return blacklistedTypeResult(input.DocumentType), nil
 		}
 
 		body := onec.DocumentPostRequest{Type: input.DocumentType, Ref: input.Ref}

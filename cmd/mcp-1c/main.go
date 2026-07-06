@@ -25,7 +25,7 @@ import (
 //	go build -ldflags "-X main.version=0.4.2-beta" ./cmd/mcp-1c
 var version = "dev"
 
-const expectedExtensionVersion = "0.4.1"
+const expectedExtensionVersion = "0.5.0"
 
 func main() {
 	log.SetOutput(os.Stderr)
@@ -51,6 +51,7 @@ func main() {
 	enableWrites := flag.Bool("enable-writes", false, "Enable accounting write tools (create_document, post_document, unpost_document). Requires --write-user/--write-password. Off by default — read-only is the safe out-of-box behaviour.")
 	writeUser := flag.String("write-user", "", "1C user for write tools, separate from --user (required when --enable-writes is set)")
 	writePassword := flag.String("write-password", "", "1C password for write tools, separate from --password (required when --enable-writes is set)")
+	writeTypeBlacklist := flag.String("write-type-blacklist", "", "Comma-separated glob patterns of document/catalog type names that write tools refuse to touch even with full 1C rights (default: dibank_*,дибанк_* — bank payment documents). Pass an empty string to disable this safety layer entirely.")
 	quiet := flag.Bool("quiet", false, "Suppress all stderr output even when running in a terminal. Takes precedence over --verbose. Also activated by env MCP_1C_NO_TTY=1.")
 	verbose := flag.Bool("verbose", false, "Force verbose stderr output even when stdin is a pipe (useful for MCP client debugging). Overrides auto-detect and is itself overridden by --quiet.")
 	// Sentinel 0 => "flag not passed", so the MCP_1C_MAX_RESPONSE_SIZE env var
@@ -200,6 +201,15 @@ func main() {
 	if *writePassword != "" {
 		cfg.WritePassword = *writePassword
 	}
+	// write-type-blacklist needs to distinguish "flag not passed" (keep the
+	// config default, tools.DefaultWriteTypeBlacklist) from "flag passed as
+	// an empty string" (explicitly disable the check) — flag.Visit is the
+	// only way to tell those apart, since both parse to "".
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "write-type-blacklist" {
+			cfg.WriteTypeBlacklist = config.ParseWriteTypeBlacklist(*writeTypeBlacklist)
+		}
+	})
 
 	client := onec.NewClient(cfg.BaseURL, cfg.User, cfg.Password,
 		onec.WithMaxResponseSize(cfg.MaxResponseSizeMiB),
@@ -237,7 +247,7 @@ func main() {
 		// Index builds in background. ModuleCount is available after Ready().
 	}
 
-	s := server.New(version, client, dumpIndex, writeClient)
+	s := server.New(version, client, dumpIndex, writeClient, cfg.WriteTypeBlacklist)
 
 	if err := s.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		fmt.Fprintf(os.Stderr, "mcp-1c error: %v\n", err)

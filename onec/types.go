@@ -150,14 +150,18 @@ type DocumentPostRequest struct {
 	Ref  string `json:"ref"`
 }
 
-// DocumentGetResult is the response from GET /document/{type}/{ref}.
+// DocumentGetResult is the response from GET /document/{type}/{ref} and from
+// document update (POST /document/update, which returns the fresh state after
+// applying changes).
 type DocumentGetResult struct {
-	Ref        string         `json:"ref"`
-	Type       string         `json:"type"`
-	Number     string         `json:"number"`
-	Date       string         `json:"date"`
-	Posted     bool           `json:"posted"`
-	Attributes map[string]any `json:"attributes"`
+	Ref             string                      `json:"ref"`
+	Type            string                      `json:"type"`
+	Number          string                      `json:"number"`
+	Date            string                      `json:"date"`
+	Posted          bool                        `json:"posted"`
+	DeletionMark    bool                        `json:"deletion_mark"`
+	Attributes      map[string]any              `json:"attributes"`
+	TabularSections map[string][]map[string]any `json:"tabular_sections"`
 }
 
 // APIError is the structured error body returned by 1C write endpoints:
@@ -167,4 +171,80 @@ type APIError struct {
 	Code    string `json:"error"`
 	Message string `json:"message"`
 	Field   string `json:"field,omitempty"`
+}
+
+// CreateCatalogItemRequest is the request body for the catalog item creation endpoint (POST /catalog).
+type CreateCatalogItemRequest struct {
+	Type            string                      `json:"type"`
+	IsGroup         bool                        `json:"is_group,omitempty"`
+	OwnerType       string                      `json:"owner_type,omitempty"`
+	Attributes      map[string]any              `json:"attributes,omitempty"`
+	TabularSections map[string][]map[string]any `json:"tabular_sections,omitempty"`
+}
+
+// CatalogWriteResult is the response from the catalog item creation endpoint.
+type CatalogWriteResult struct {
+	Ref         string `json:"ref"`
+	Code        string `json:"code"`
+	Description string `json:"description"`
+	IsGroup     bool   `json:"is_group"`
+}
+
+// CatalogGetResult is the response from GET /catalog/{type}/{ref} and from
+// catalog update (POST /catalog/update, which returns the fresh state).
+type CatalogGetResult struct {
+	Ref             string                      `json:"ref"`
+	Type            string                      `json:"type"`
+	Code            string                      `json:"code"`
+	Description     string                      `json:"description"`
+	IsGroup         bool                        `json:"is_group"`
+	DeletionMark    bool                        `json:"deletion_mark"`
+	Parent          string                      `json:"parent,omitempty"`
+	Owner           string                      `json:"owner,omitempty"`
+	Attributes      map[string]any              `json:"attributes"`
+	TabularSections map[string][]map[string]any `json:"tabular_sections"`
+}
+
+// UpdateObjectRequest is the request body for POST /catalog/update and POST /document/update.
+// Named tabular sections are replaced in full (not merged) by the 1C side.
+type UpdateObjectRequest struct {
+	Type            string                      `json:"type"`
+	Ref             string                      `json:"ref"`
+	Attributes      map[string]any              `json:"attributes,omitempty"`
+	TabularSections map[string][]map[string]any `json:"tabular_sections,omitempty"`
+}
+
+// DeletionMarkRequest is the request body for POST /object/deletion-mark.
+type DeletionMarkRequest struct {
+	ObjectKind string `json:"object_kind"`
+	Type       string `json:"type"`
+	Ref        string `json:"ref"`
+	Mark       bool   `json:"mark"`
+}
+
+// DeletionMarkResult is the response from POST /object/deletion-mark. Posted is
+// nil for catalogs (documents only) — see onec-side ПометкаУдаленияPOST.
+type DeletionMarkResult struct {
+	Ref          string `json:"ref"`
+	DeletionMark bool   `json:"deletion_mark"`
+	Posted       *bool  `json:"posted,omitempty"`
+}
+
+// FindRefResult is the response from GET /find.
+type FindRefResult struct {
+	Items     []FindRefItem `json:"items"`
+	Total     int           `json:"total"`
+	Truncated bool          `json:"truncated"`
+}
+
+// FindRefItem is a single match returned by /find.
+type FindRefItem struct {
+	Ref          string `json:"ref"`
+	Presentation string `json:"presentation"`
+	Code         string `json:"code"`
+	TypeName     string `json:"type_name"`
+	DeletionMark bool   `json:"deletion_mark"`
+	IsGroup      bool   `json:"is_group"`
+	Date         string `json:"date,omitempty"`
+	Posted       *bool  `json:"posted,omitempty"`
 }

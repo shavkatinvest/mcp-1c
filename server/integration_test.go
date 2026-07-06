@@ -14,6 +14,7 @@ import (
 
 	"github.com/feenlace/mcp-1c/dump"
 	"github.com/feenlace/mcp-1c/onec"
+	"github.com/feenlace/mcp-1c/tools"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -165,14 +166,32 @@ func mock1CHandler() http.Handler {
 	// structured posting_failed error, so tests can exercise that path without
 	// a real 1C posting-rule violation.
 	type mockDoc struct {
-		typ        string
-		number     string
-		date       string
-		posted     bool
-		attributes map[string]any
+		typ             string
+		number          string
+		date            string
+		posted          bool
+		deletionMark    bool
+		attributes      map[string]any
+		tabularSections map[string][]map[string]any
 	}
 	docs := map[string]*mockDoc{}
 	docSeq := 0
+
+	// In-memory catalog item store for the catalog-tool integration tests
+	// (create_catalog_item / update_catalog_item / get_catalog_item).
+	type mockCatalogItem struct {
+		typ             string
+		code            string
+		description     string
+		isGroup         bool
+		deletionMark    bool
+		parent          string
+		owner           string
+		attributes      map[string]any
+		tabularSections map[string][]map[string]any
+	}
+	catalogItems := map[string]*mockCatalogItem{}
+	catalogSeq := 0
 
 	mux.HandleFunc("/document/post", func(w http.ResponseWriter, r *http.Request) {
 		writeJSONErr := func(status int, code, msg string) {
@@ -236,31 +255,309 @@ func mock1CHandler() http.Handler {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		json.NewEncoder(w).Encode(map[string]any{
 			"ref": ref, "type": doc.typ, "number": doc.number, "date": doc.date,
-			"posted": doc.posted, "attributes": doc.attributes,
+			"posted": doc.posted, "deletion_mark": doc.deletionMark,
+			"attributes": doc.attributes, "tabular_sections": doc.tabularSections,
+		})
+	})
+
+	mux.HandleFunc("/document/update", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Type            string                      `json:"type"`
+			Ref             string                      `json:"ref"`
+			Attributes      map[string]any              `json:"attributes"`
+			TabularSections map[string][]map[string]any `json:"tabular_sections"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		doc, ok := docs[req.Ref]
+		if !ok {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]any{"error": "not_found", "message": "Документ не найден: " + req.Ref})
+			return
+		}
+		if doc.attributes == nil {
+			doc.attributes = map[string]any{}
+		}
+		for k, v := range req.Attributes {
+			doc.attributes[k] = v
+		}
+		if doc.tabularSections == nil {
+			doc.tabularSections = map[string][]map[string]any{}
+		}
+		for k, v := range req.TabularSections {
+			doc.tabularSections[k] = v
+		}
+
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		json.NewEncoder(w).Encode(map[string]any{
+			"ref": req.Ref, "type": doc.typ, "number": doc.number, "date": doc.date,
+			"posted": doc.posted, "deletion_mark": doc.deletionMark,
+			"attributes": doc.attributes, "tabular_sections": doc.tabularSections,
 		})
 	})
 
 	mux.HandleFunc("/document", func(w http.ResponseWriter, r *http.Request) {
 		// POST /document
 		var req struct {
-			Type       string         `json:"type"`
-			Attributes map[string]any `json:"attributes"`
+			Type            string                      `json:"type"`
+			Attributes      map[string]any              `json:"attributes"`
+			TabularSections map[string][]map[string]any `json:"tabular_sections"`
 		}
 		json.NewDecoder(r.Body).Decode(&req)
 
 		docSeq++
 		ref := fmt.Sprintf("00000000-0000-0000-0000-%012d", docSeq)
 		docs[ref] = &mockDoc{
-			typ:        req.Type,
-			number:     fmt.Sprintf("ЗН-%06d", docSeq),
-			date:       "2026-07-02T10:00:00",
-			posted:     false,
-			attributes: req.Attributes,
+			typ:             req.Type,
+			number:          fmt.Sprintf("ЗН-%06d", docSeq),
+			date:            "2026-07-02T10:00:00",
+			posted:          false,
+			attributes:      req.Attributes,
+			tabularSections: req.TabularSections,
 		}
 
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		json.NewEncoder(w).Encode(map[string]any{
 			"ref": ref, "number": docs[ref].number, "date": docs[ref].date, "posted": false,
+		})
+	})
+
+	mux.HandleFunc("/catalog", func(w http.ResponseWriter, r *http.Request) {
+		// POST /catalog
+		var req struct {
+			Type            string                      `json:"type"`
+			IsGroup         bool                        `json:"is_group"`
+			OwnerType       string                      `json:"owner_type"`
+			Attributes      map[string]any              `json:"attributes"`
+			TabularSections map[string][]map[string]any `json:"tabular_sections"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+
+		catalogSeq++
+		ref := fmt.Sprintf("10000000-0000-0000-0000-%012d", catalogSeq)
+		description, _ := req.Attributes["Наименование"].(string)
+		code, _ := req.Attributes["Код"].(string)
+		if code == "" {
+			code = fmt.Sprintf("%05d", catalogSeq)
+		}
+		parent, _ := req.Attributes["Родитель"].(string)
+		owner, _ := req.Attributes["Владелец"].(string)
+		attrs := map[string]any{}
+		for k, v := range req.Attributes {
+			if k != "Наименование" && k != "Код" && k != "Родитель" && k != "Владелец" {
+				attrs[k] = v
+			}
+		}
+		catalogItems[ref] = &mockCatalogItem{
+			typ:             req.Type,
+			code:            code,
+			description:     description,
+			isGroup:         req.IsGroup,
+			parent:          parent,
+			owner:           owner,
+			attributes:      attrs,
+			tabularSections: req.TabularSections,
+		}
+
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		json.NewEncoder(w).Encode(map[string]any{
+			"ref": ref, "code": code, "description": description, "is_group": req.IsGroup,
+		})
+	})
+
+	mux.HandleFunc("/catalog/update", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Type            string                      `json:"type"`
+			Ref             string                      `json:"ref"`
+			Attributes      map[string]any              `json:"attributes"`
+			TabularSections map[string][]map[string]any `json:"tabular_sections"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		item, ok := catalogItems[req.Ref]
+		if !ok {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]any{"error": "not_found", "message": "Элемент не найден: " + req.Ref})
+			return
+		}
+		if item.attributes == nil {
+			item.attributes = map[string]any{}
+		}
+		for k, v := range req.Attributes {
+			switch k {
+			case "Наименование":
+				item.description, _ = v.(string)
+			case "Код":
+				item.code, _ = v.(string)
+			case "Родитель":
+				item.parent, _ = v.(string)
+			case "Владелец":
+				item.owner, _ = v.(string)
+			default:
+				item.attributes[k] = v
+			}
+		}
+		if item.tabularSections == nil {
+			item.tabularSections = map[string][]map[string]any{}
+		}
+		for k, v := range req.TabularSections {
+			item.tabularSections[k] = v
+		}
+
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		json.NewEncoder(w).Encode(map[string]any{
+			"ref": req.Ref, "type": item.typ, "code": item.code, "description": item.description,
+			"is_group": item.isGroup, "deletion_mark": item.deletionMark,
+			"parent": item.parent, "owner": item.owner,
+			"attributes": item.attributes, "tabular_sections": item.tabularSections,
+		})
+	})
+
+	mux.HandleFunc("/catalog/", func(w http.ResponseWriter, r *http.Request) {
+		// GET /catalog/{type}/{ref}
+		path := strings.TrimPrefix(r.URL.Path, "/catalog/")
+		parts := strings.SplitN(path, "/", 2)
+		if len(parts) != 2 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		ref := parts[1]
+		item, ok := catalogItems[ref]
+		if !ok {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]any{"error": "not_found", "message": "Элемент не найден: " + ref})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		json.NewEncoder(w).Encode(map[string]any{
+			"ref": ref, "type": item.typ, "code": item.code, "description": item.description,
+			"is_group": item.isGroup, "deletion_mark": item.deletionMark,
+			"parent": item.parent, "owner": item.owner,
+			"attributes": item.attributes, "tabular_sections": item.tabularSections,
+		})
+	})
+
+	mux.HandleFunc("/object/deletion-mark", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ObjectKind string `json:"object_kind"`
+			Type       string `json:"type"`
+			Ref        string `json:"ref"`
+			Mark       bool   `json:"mark"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+
+		switch req.ObjectKind {
+		case "Document":
+			doc, ok := docs[req.Ref]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				json.NewEncoder(w).Encode(map[string]any{"error": "not_found", "message": "Документ не найден: " + req.Ref})
+				return
+			}
+			doc.deletionMark = req.Mark
+			// Mirrors real 1C platform behaviour: marking a posted document for
+			// deletion automatically unposts it.
+			if req.Mark {
+				doc.posted = false
+			}
+			json.NewEncoder(w).Encode(map[string]any{"ref": req.Ref, "deletion_mark": doc.deletionMark, "posted": doc.posted})
+		case "Catalog":
+			item, ok := catalogItems[req.Ref]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				json.NewEncoder(w).Encode(map[string]any{"error": "not_found", "message": "Элемент не найден: " + req.Ref})
+				return
+			}
+			item.deletionMark = req.Mark
+			json.NewEncoder(w).Encode(map[string]any{"ref": req.Ref, "deletion_mark": item.deletionMark})
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]any{"error": "validation_failed", "message": "Unknown object_kind: " + req.ObjectKind})
+		}
+	})
+
+	mux.HandleFunc("/find", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		kind := q.Get("type")
+		name := q.Get("name")
+		query := strings.ToLower(q.Get("query"))
+		includeMarked := q.Get("include_marked") == "true"
+
+		type item struct {
+			ref, presentation, code, typeName, date string
+			deletionMark, isGroup                   bool
+			posted                                  *bool
+		}
+		var matches []item
+
+		switch kind {
+		case "Catalog":
+			for ref, ci := range catalogItems {
+				if ci.typ != name {
+					continue
+				}
+				if ci.deletionMark && !includeMarked {
+					continue
+				}
+				if query != "" && !strings.Contains(strings.ToLower(ci.description), query) && !strings.Contains(strings.ToLower(ci.code), query) {
+					continue
+				}
+				matches = append(matches, item{
+					ref: ref, presentation: ci.description, code: ci.code,
+					typeName: "СправочникСсылка." + ci.typ, deletionMark: ci.deletionMark, isGroup: ci.isGroup,
+				})
+			}
+		case "Document":
+			for ref, doc := range docs {
+				if doc.typ != name {
+					continue
+				}
+				if doc.deletionMark && !includeMarked {
+					continue
+				}
+				if query != "" && !strings.Contains(strings.ToLower(doc.number), query) {
+					continue
+				}
+				posted := doc.posted
+				matches = append(matches, item{
+					ref: ref, presentation: doc.number, code: doc.number,
+					typeName: "ДокументСсылка." + doc.typ, deletionMark: doc.deletionMark,
+					date: doc.date, posted: &posted,
+				})
+			}
+		}
+
+		limit := 20
+		if l := q.Get("limit"); l != "" {
+			fmt.Sscanf(l, "%d", &limit)
+		}
+		total := len(matches)
+		truncated := false
+		if len(matches) > limit {
+			matches = matches[:limit]
+			truncated = true
+		}
+
+		resultItems := make([]map[string]any, 0, len(matches))
+		for _, m := range matches {
+			entry := map[string]any{
+				"ref": m.ref, "presentation": m.presentation, "code": m.code,
+				"type_name": m.typeName, "deletion_mark": m.deletionMark, "is_group": m.isGroup,
+			}
+			if m.date != "" {
+				entry["date"] = m.date
+			}
+			if m.posted != nil {
+				entry["posted"] = *m.posted
+			}
+			resultItems = append(resultItems, entry)
+		}
+
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		json.NewEncoder(w).Encode(map[string]any{
+			"items": resultItems, "total": total, "truncated": truncated,
 		})
 	})
 
@@ -291,8 +588,9 @@ func mock1CHandler() http.Handler {
 
 // setupIntegration creates a mock 1C server and connected MCP client session.
 // enableWrites controls whether the accounting write tools (create_document,
-// post_document, unpost_document) are registered on the server.
-func setupIntegration(t *testing.T, enableWrites bool) (*mcp.ClientSession, func()) {
+// post_document, unpost_document) are registered on the server. writeBlacklist
+// is passed through to server.New unchanged (nil disables the blacklist check).
+func setupIntegration(t *testing.T, enableWrites bool, writeBlacklist []string) (*mcp.ClientSession, func()) {
 	t.Helper()
 
 	mock := httptest.NewServer(mock1CHandler())
@@ -327,7 +625,7 @@ func setupIntegration(t *testing.T, enableWrites bool) (*mcp.ClientSession, func
 	if enableWrites {
 		writeClient = client
 	}
-	srv := New("test", client, dumpIndex, writeClient)
+	srv := New("test", client, dumpIndex, writeClient, writeBlacklist)
 
 	ctx := context.Background()
 	ct, st := mcp.NewInMemoryTransports()
@@ -354,7 +652,7 @@ func setupIntegration(t *testing.T, enableWrites bool) (*mcp.ClientSession, func
 }
 
 func TestIntegration_ListTools(t *testing.T) {
-	session, cleanup := setupIntegration(t, false)
+	session, cleanup := setupIntegration(t, false, nil)
 	defer cleanup()
 
 	result, err := session.ListTools(context.Background(), nil)
@@ -372,6 +670,7 @@ func TestIntegration_ListTools(t *testing.T) {
 		"search_code", "get_form_structure", "validate_query",
 		"get_event_log", "get_configuration_info", "bsl_syntax_help",
 		"get_document", "propose_module_change", "list_proposed_changes",
+		"find_ref", "get_catalog_item",
 	}
 	for _, want := range expected {
 		if !toolNames[want] {
@@ -391,7 +690,7 @@ func TestIntegration_ListTools(t *testing.T) {
 }
 
 func TestIntegration_ListTools_WritesEnabled(t *testing.T) {
-	session, cleanup := setupIntegration(t, true)
+	session, cleanup := setupIntegration(t, true, nil)
 	defer cleanup()
 
 	result, err := session.ListTools(context.Background(), nil)
@@ -404,7 +703,11 @@ func TestIntegration_ListTools_WritesEnabled(t *testing.T) {
 		toolNames[tool.Name] = true
 	}
 
-	for _, want := range []string{"create_document", "post_document", "unpost_document", "get_document"} {
+	for _, want := range []string{
+		"create_document", "post_document", "unpost_document", "get_document",
+		"update_document", "create_catalog_item", "update_catalog_item",
+		"set_deletion_mark", "find_ref", "get_catalog_item",
+	} {
 		if !toolNames[want] {
 			t.Errorf("expected write tool %q in list when enableWrites=true, got: %v", want, toolNames)
 		}
@@ -416,7 +719,7 @@ func TestIntegration_ListTools_WritesEnabled(t *testing.T) {
 // would do: create a draft (never posted by create_document itself), verify
 // it is unposted, post it explicitly, then verify the posted state.
 func TestIntegration_DocumentWriteFlow(t *testing.T) {
-	session, cleanup := setupIntegration(t, true)
+	session, cleanup := setupIntegration(t, true, nil)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -481,7 +784,7 @@ func TestIntegration_DocumentWriteFlow(t *testing.T) {
 // exact 1C message, not a generic Go/protocol error — required so the LLM can
 // see the reason and explain it or self-correct.
 func TestIntegration_PostDocument_StructuredFailure(t *testing.T) {
-	session, cleanup := setupIntegration(t, true)
+	session, cleanup := setupIntegration(t, true, nil)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -529,7 +832,7 @@ func extractRef(t *testing.T, text string) string {
 }
 
 func TestIntegration_MetadataTree(t *testing.T) {
-	session, cleanup := setupIntegration(t, false)
+	session, cleanup := setupIntegration(t, false, nil)
 	defer cleanup()
 
 	// Without filter -- summary with category names and counts.
@@ -573,7 +876,7 @@ func TestIntegration_MetadataTree(t *testing.T) {
 }
 
 func TestIntegration_ObjectStructure(t *testing.T) {
-	session, cleanup := setupIntegration(t, false)
+	session, cleanup := setupIntegration(t, false, nil)
 	defer cleanup()
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -599,7 +902,7 @@ func TestIntegration_ObjectStructure(t *testing.T) {
 }
 
 func TestIntegration_ObjectStructure_Register(t *testing.T) {
-	session, cleanup := setupIntegration(t, false)
+	session, cleanup := setupIntegration(t, false, nil)
 	defer cleanup()
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -625,7 +928,7 @@ func TestIntegration_ObjectStructure_Register(t *testing.T) {
 }
 
 func TestIntegration_ObjectStructure_NotFound(t *testing.T) {
-	session, cleanup := setupIntegration(t, false)
+	session, cleanup := setupIntegration(t, false, nil)
 	defer cleanup()
 
 	_, err := session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -644,7 +947,7 @@ func TestIntegration_ObjectStructure_NotFound(t *testing.T) {
 }
 
 func TestIntegration_FormStructure(t *testing.T) {
-	session, cleanup := setupIntegration(t, false)
+	session, cleanup := setupIntegration(t, false, nil)
 	defer cleanup()
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -670,7 +973,7 @@ func TestIntegration_FormStructure(t *testing.T) {
 }
 
 func TestIntegration_ConfigInfo(t *testing.T) {
-	session, cleanup := setupIntegration(t, false)
+	session, cleanup := setupIntegration(t, false, nil)
 	defer cleanup()
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -698,7 +1001,7 @@ func TestIntegration_ConfigInfo(t *testing.T) {
 }
 
 func TestIntegration_SearchCode(t *testing.T) {
-	session, cleanup := setupIntegration(t, false)
+	session, cleanup := setupIntegration(t, false, nil)
 	defer cleanup()
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -727,7 +1030,7 @@ func TestIntegration_SearchCode(t *testing.T) {
 }
 
 func TestIntegration_ProposeModuleChange(t *testing.T) {
-	session, cleanup := setupIntegration(t, false)
+	session, cleanup := setupIntegration(t, false, nil)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -784,7 +1087,7 @@ func TestIntegration_ProposeModuleChange(t *testing.T) {
 }
 
 func TestIntegration_BSLSyntaxHelp(t *testing.T) {
-	session, cleanup := setupIntegration(t, false)
+	session, cleanup := setupIntegration(t, false, nil)
 	defer cleanup()
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -810,7 +1113,7 @@ func TestIntegration_BSLSyntaxHelp(t *testing.T) {
 }
 
 func TestIntegration_ExecuteQuery(t *testing.T) {
-	session, cleanup := setupIntegration(t, false)
+	session, cleanup := setupIntegration(t, false, nil)
 	defer cleanup()
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -835,7 +1138,7 @@ func TestIntegration_ExecuteQuery(t *testing.T) {
 }
 
 func TestIntegration_ValidateQuery_Valid(t *testing.T) {
-	session, cleanup := setupIntegration(t, false)
+	session, cleanup := setupIntegration(t, false, nil)
 	defer cleanup()
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -858,7 +1161,7 @@ func TestIntegration_ValidateQuery_Valid(t *testing.T) {
 }
 
 func TestIntegration_ValidateQuery_Invalid(t *testing.T) {
-	session, cleanup := setupIntegration(t, false)
+	session, cleanup := setupIntegration(t, false, nil)
 	defer cleanup()
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -881,7 +1184,7 @@ func TestIntegration_ValidateQuery_Invalid(t *testing.T) {
 }
 
 func TestIntegration_EventLog(t *testing.T) {
-	session, cleanup := setupIntegration(t, false)
+	session, cleanup := setupIntegration(t, false, nil)
 	defer cleanup()
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -914,7 +1217,7 @@ func TestIntegration_EventLog(t *testing.T) {
 }
 
 func TestIntegration_ListPrompts(t *testing.T) {
-	session, cleanup := setupIntegration(t, false)
+	session, cleanup := setupIntegration(t, false, nil)
 	defer cleanup()
 
 	result, err := session.ListPrompts(context.Background(), nil)
@@ -954,7 +1257,7 @@ func TestIntegration_ListPrompts(t *testing.T) {
 }
 
 func TestIntegration_GetPrompt_ReviewModule(t *testing.T) {
-	session, cleanup := setupIntegration(t, false)
+	session, cleanup := setupIntegration(t, false, nil)
 	defer cleanup()
 
 	result, err := session.GetPrompt(context.Background(), &mcp.GetPromptParams{
@@ -995,6 +1298,242 @@ func TestIntegration_GetPrompt_ReviewModule(t *testing.T) {
 		if !strings.Contains(tc.Text, keyword) {
 			t.Errorf("expected %q in prompt text, got:\n%s", keyword, tc.Text)
 		}
+	}
+}
+
+// TestIntegrationFindRef exercises find_ref end to end: an empty result before
+// anything exists, then a match once a catalog item has been created via
+// create_catalog_item, mirroring how an LLM resolves a GUID before referencing
+// it in another write call.
+func TestIntegrationFindRef(t *testing.T) {
+	session, cleanup := setupIntegration(t, true, nil)
+	defer cleanup()
+	ctx := context.Background()
+
+	emptyResult, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "find_ref",
+		Arguments: map[string]any{
+			"object_kind": "Catalog",
+			"name":        "Контрагенты",
+			"query":       "Ромашка",
+		},
+	})
+	if err != nil {
+		t.Fatalf("find_ref error: %v", err)
+	}
+	emptyText := emptyResult.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(emptyText, "Ничего не найдено") {
+		t.Errorf("expected no matches before creation, got:\n%s", emptyText)
+	}
+
+	createResult, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "create_catalog_item",
+		Arguments: map[string]any{
+			"catalog_type": "Контрагенты",
+			"attributes":   map[string]any{"Наименование": "ООО Ромашка"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create_catalog_item error: %v", err)
+	}
+	if createResult.IsError {
+		t.Fatalf("create_catalog_item returned tool error: %v", createResult.Content)
+	}
+	ref := extractRef(t, createResult.Content[0].(*mcp.TextContent).Text)
+
+	foundResult, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "find_ref",
+		Arguments: map[string]any{
+			"object_kind": "Catalog",
+			"name":        "Контрагенты",
+			"query":       "Ромашка",
+		},
+	})
+	if err != nil {
+		t.Fatalf("find_ref (after create) error: %v", err)
+	}
+	foundText := foundResult.Content[0].(*mcp.TextContent).Text
+	for _, want := range []string{"ООО Ромашка", ref} {
+		if !strings.Contains(foundText, want) {
+			t.Errorf("expected %q in find_ref result, got:\n%s", want, foundText)
+		}
+	}
+}
+
+// TestIntegrationCatalogLifecycle drives create -> get -> update -> deletion
+// mark for a catalog item through the MCP protocol, the catalog counterpart of
+// TestIntegration_DocumentWriteFlow.
+func TestIntegrationCatalogLifecycle(t *testing.T) {
+	session, cleanup := setupIntegration(t, true, nil)
+	defer cleanup()
+	ctx := context.Background()
+
+	createResult, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "create_catalog_item",
+		Arguments: map[string]any{
+			"catalog_type": "Контрагенты",
+			"attributes":   map[string]any{"Наименование": "ООО Ромашка", "ИНН": "301234567"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create_catalog_item error: %v", err)
+	}
+	if createResult.IsError {
+		t.Fatalf("create_catalog_item returned tool error: %v", createResult.Content)
+	}
+	ref := extractRef(t, createResult.Content[0].(*mcp.TextContent).Text)
+
+	getResult, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "get_catalog_item",
+		Arguments: map[string]any{"catalog_type": "Контрагенты", "ref": ref},
+	})
+	if err != nil {
+		t.Fatalf("get_catalog_item error: %v", err)
+	}
+	getText := getResult.Content[0].(*mcp.TextContent).Text
+	for _, want := range []string{"ООО Ромашка", "301234567", "Пометка удаления: false"} {
+		if !strings.Contains(getText, want) {
+			t.Errorf("expected %q in get_catalog_item result, got:\n%s", want, getText)
+		}
+	}
+
+	updateResult, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "update_catalog_item",
+		Arguments: map[string]any{
+			"catalog_type": "Контрагенты",
+			"ref":          ref,
+			"attributes":   map[string]any{"Наименование": "ООО Ромашка Новая"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("update_catalog_item error: %v", err)
+	}
+	if updateResult.IsError {
+		t.Fatalf("update_catalog_item returned tool error: %v", updateResult.Content)
+	}
+	updateText := updateResult.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(updateText, "ООО Ромашка Новая") {
+		t.Errorf("expected updated name in update_catalog_item result, got:\n%s", updateText)
+	}
+
+	markResult, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "set_deletion_mark",
+		Arguments: map[string]any{
+			"object_kind": "Catalog",
+			"type":        "Контрагенты",
+			"ref":         ref,
+		},
+	})
+	if err != nil {
+		t.Fatalf("set_deletion_mark error: %v", err)
+	}
+	if markResult.IsError {
+		t.Fatalf("set_deletion_mark returned tool error: %v", markResult.Content)
+	}
+
+	getResult2, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "get_catalog_item",
+		Arguments: map[string]any{"catalog_type": "Контрагенты", "ref": ref},
+	})
+	if err != nil {
+		t.Fatalf("get_catalog_item (after mark) error: %v", err)
+	}
+	getText2 := getResult2.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(getText2, "Пометка удаления: true") {
+		t.Errorf("expected deletion mark set, got:\n%s", getText2)
+	}
+}
+
+// TestIntegrationUpdateDocument verifies update_document merges attributes
+// without touching posted state, and that posting a document and then marking
+// it for deletion auto-unposts it (mirrors the real 1C platform behaviour
+// documented in set_deletion_mark's description).
+func TestIntegrationUpdateDocument(t *testing.T) {
+	session, cleanup := setupIntegration(t, true, nil)
+	defer cleanup()
+	ctx := context.Background()
+
+	createResult, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "create_document",
+		Arguments: map[string]any{
+			"document_type": "РеализацияТоваровУслуг",
+			"attributes":    map[string]any{"Организация": "org-guid"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create_document error: %v", err)
+	}
+	ref := extractRef(t, createResult.Content[0].(*mcp.TextContent).Text)
+
+	updateResult, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "update_document",
+		Arguments: map[string]any{
+			"document_type": "РеализацияТоваровУслуг",
+			"ref":           ref,
+			"attributes":    map[string]any{"Комментарий": "изменено через MCP"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("update_document error: %v", err)
+	}
+	if updateResult.IsError {
+		t.Fatalf("update_document returned tool error: %v", updateResult.Content)
+	}
+	updateText := updateResult.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(updateText, "изменено через MCP") {
+		t.Errorf("expected updated comment in update_document result, got:\n%s", updateText)
+	}
+
+	if _, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "post_document",
+		Arguments: map[string]any{"document_type": "РеализацияТоваровУслуг", "ref": ref},
+	}); err != nil {
+		t.Fatalf("post_document error: %v", err)
+	}
+
+	markResult, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "set_deletion_mark",
+		Arguments: map[string]any{
+			"object_kind": "Document",
+			"type":        "РеализацияТоваровУслуг",
+			"ref":         ref,
+		},
+	})
+	if err != nil {
+		t.Fatalf("set_deletion_mark error: %v", err)
+	}
+	markText := markResult.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(markText, "Текущее состояние проведения: false") {
+		t.Errorf("expected posting a marked document to be auto-unposted, got:\n%s", markText)
+	}
+}
+
+// TestIntegrationBlacklistedDocumentType verifies that a document type
+// matching the write blacklist is rejected by every write tool before any
+// mock 1C HTTP call is made, regardless of the underlying (mock) user's
+// rights — the safety layer tools.IsWriteBlacklisted adds on top of
+// writeClient permissions.
+func TestIntegrationBlacklistedDocumentType(t *testing.T) {
+	session, cleanup := setupIntegration(t, true, tools.DefaultWriteTypeBlacklist)
+	defer cleanup()
+	ctx := context.Background()
+
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "create_document",
+		Arguments: map[string]any{
+			"document_type": "dibank_ПлатежноеПоручениеИсходящее",
+			"attributes":    map[string]any{"Организация": "org-guid"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create_document transport error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected IsError=true for blacklisted document type")
+	}
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "dibank_ПлатежноеПоручениеИсходящее") {
+		t.Errorf("expected blacklisted type name in error text, got:\n%s", text)
 	}
 }
 

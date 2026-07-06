@@ -147,4 +147,32 @@
 			<value>true</value>
 		</right>
 	</object>
+	<object>
+		<name>HTTPService.MCPService.URLTemplate.СправочникПоСсылке</name>
+		<right>
+			<name>Use</name>
+			<value>true</value>
+		</right>
+	</object>
+	<object>
+		<name>HTTPService.MCPService.URLTemplate.СправочникПоСсылке.Method.GET</name>
+		<right>
+			<name>Use</name>
+			<value>true</value>
+		</right>
+	</object>
+	<object>
+		<name>HTTPService.MCPService.URLTemplate.ПоискСсылки</name>
+		<right>
+			<name>Use</name>
+			<value>true</value>
+		</right>
+	</object>
+	<object>
+		<name>HTTPService.MCPService.URLTemplate.ПоискСсылки.Method.GET</name>
+		<right>
+			<name>Use</name>
+			<value>true</value>
+		</right>
+	</object>
 </Rights>

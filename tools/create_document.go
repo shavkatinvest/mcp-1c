@@ -52,7 +52,7 @@ func CreateDocumentTool() *mcp.Tool {
 }
 
 // NewCreateDocumentHandler returns a ToolHandler that creates an unposted document draft in 1C.
-func NewCreateDocumentHandler(client *onec.Client) mcp.ToolHandler {
+func NewCreateDocumentHandler(client *onec.Client, writeBlacklist []string) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var input createDocumentInput
 		if err := json.Unmarshal(req.Params.Arguments, &input); err != nil {
@@ -60,6 +60,9 @@ func NewCreateDocumentHandler(client *onec.Client) mcp.ToolHandler {
 		}
 		if input.DocumentType == "" {
 			return nil, fmt.Errorf("document_type is required")
+		}
+		if IsWriteBlacklisted(input.DocumentType, writeBlacklist) {
+			return blacklistedTypeResult(input.DocumentType), nil
 		}
 
 		body := onec.CreateDocumentRequest{

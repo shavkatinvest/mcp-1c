@@ -74,16 +74,19 @@ func formatDocument(r *onec.DocumentGetResult) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## %s №%s от %s\n\n", r.Type, r.Number, r.Date)
 	fmt.Fprintf(&b, "- ref: %s\n", r.Ref)
-	fmt.Fprintf(&b, "- Проведён: %v\n\n", r.Posted)
+	fmt.Fprintf(&b, "- Проведён: %v\n", r.Posted)
+	fmt.Fprintf(&b, "- Пометка удаления: %v\n\n", r.DeletionMark)
 
 	if len(r.Attributes) == 0 {
 		b.WriteString("Реквизиты отсутствуют.\n")
-		return b.String()
+	} else {
+		b.WriteString("### Реквизиты\n\n")
+		for name, value := range r.Attributes {
+			fmt.Fprintf(&b, "- %s: %s\n", name, formatAttributeValue(value))
+		}
+		b.WriteString("\n")
 	}
 
-	b.WriteString("### Реквизиты\n\n")
-	for name, value := range r.Attributes {
-		fmt.Fprintf(&b, "- %s: %v\n", name, value)
-	}
+	b.WriteString(formatTabularSections(r.TabularSections))
 	return b.String()
 }
